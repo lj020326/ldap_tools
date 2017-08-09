@@ -154,16 +154,7 @@ df_result = df_result.apply(lambda row: get_ldapinfo(row, ldap_mgr, ldap_fields,
 log.info("[post ldap] df_result.shape=%s" % str(df_result.shape))
 log.debug("[post ldap] df_result=\n%s" % df_result)
 
-# import re
-# def split_it(displayName):
-#     x = re.findall('(\w+)', displayName)
-#     if x :
-#       return(x.group())
-
-# df_result['usergroup'] = df_result['displayName'].apply(lambda x: split_it(x))
-# df_result['usergroup'] = df_result['displayName'].apply(split_it)
-
-df_result['usergroup']=df_result['description'].str.extract('\w+ \((?P<UserGroup>\w.*)\)+', expand=True)
+df_result['usergroup']=df_result['description'].str.extract('\w+ \((?P<UserGroup>\w.*)\)', expand=True)
 
 log.info("[post derived] df_result.shape=%s" % str(df_result.shape))
 log.debug("[post derived] df_result=\n%s" % df_result)
