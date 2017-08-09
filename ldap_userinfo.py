@@ -11,12 +11,9 @@
 import pandas as pd
 import numpy as np
 import logging
-import sys
-import ldap
-import getpass
 import json
-# import codecs
-from pprint import pprint
+from math import ceil
+
 from datetime import datetime as dt
 
 # import ldap_config as cfg
@@ -65,7 +62,12 @@ class Utf8Encoder(JSONEncoder):
         return data
 
 
-def get_ldapinfo(record, ldap_mgr, ldap_fields):
+def get_ldapinfo(record, ldap_mgr, ldap_fields, df):
+    i=df.index.get_loc(record.name)
+    if i % int(ceil(float(df.shape[0])/20)) == 0:
+        pct_done=int((float(i)/df.shape[0])*100)
+        log.info("get_ldapinfo [%s%%] done, iteration [%s]" % (pct_done, i))
+
     username=record.name
     ldap_user=ldap_mgr.get_ldap_userinfo(username)
 
@@ -78,10 +80,9 @@ def get_ldapinfo(record, ldap_mgr, ldap_fields):
         # return [None for x in range(num_fields)]
         return record
 
-    log.debug("convert ldap_user values to utf-8")
-    serialized=json.dumps(ldap_user, cls=Utf8Encoder) if 'ldap_userinfo_json' in ldap_fields else None
-
-    if serialized:
+    if 'ldap_userinfo_json' in ldap_fields:
+        log.debug("convert ldap_user values to utf-8")
+        serialized=json.dumps(ldap_user, cls=Utf8Encoder) if 'ldap_userinfo_json' in ldap_fields else None
         record['ldap_userinfo_json']=serialized
 
     for field in ldap_fields:
@@ -98,14 +99,14 @@ ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
-# log.setLevel(logging.INFO)
-log.setLevel(logging.DEBUG)
+log.setLevel(loglevel)
 log.addHandler(ch)
 
 pd.set_option('display.width', 1000)
 # pd.set_option('max_colwidth',200)
 pd.reset_option('max_colwidth')
 
+log.info("loading file [%s]" % file_in_path)
 xls_file = pd.ExcelFile(file_in_path)
 
 log.info("xls_file.sheet_names=%s" % xls_file.sheet_names)
@@ -124,13 +125,15 @@ df_result = pd.concat(frames)
 log.info("[raw] df_result.shape=%s" % str(df_result.shape))
 log.debug("[raw] df_result=\n%s" % df_result)
 
-log.info("grouping by username")
-strJoin = lambda x:",".join(x.astype(str))
-df_grouped=df_result.groupby('USERNAME')
+log.info("df_results dupe count=%s" % df_result[df_result['USERNAME'].duplicated()].size)
+if df_result[df_result['USERNAME'].duplicated()].size>0:
+    log.info("grouping by username")
+    df_grouped=df_result.groupby('USERNAME')
 
-## ref: https://pandas.pydata.org/pandas-docs/stable/groupby.html
-# df_result=df_grouped.agg({'GRANTED_ROLE': strJoin, 'LAST_LOGIN': np.max})
-df_result=df_grouped.agg(OrderedDict([('GRANTED_ROLE', strJoin), ('LAST_LOGIN', np.max)]))
+    strJoin = lambda x:",".join(x.astype(str))
+    ## ref: https://pandas.pydata.org/pandas-docs/stable/groupby.html
+    # df_result=df_grouped.agg({'GRANTED_ROLE': strJoin, 'LAST_LOGIN': np.max})
+    df_result=df_grouped.agg(OrderedDict([('GRANTED_ROLE', strJoin), ('LAST_LOGIN', np.max)]))
 
 log.info("[clean] df_result.shape=%s" % str(df_result.shape))
 log.debug("[clean] df_result=\n%s" % df_result)
@@ -145,21 +148,22 @@ log.info("initializing ldap")
 ldap_mgr = LdapManager(ldap_url, admin_bind_dn, admin_pwd,search_base=base_dn)
 
 ldap_fields = ['cn', 'description', 'mail', 'department', 'manager']
-df_result = df_result.apply(lambda row: get_ldapinfo(row, ldap_mgr, ldap_fields), axis=1)
+# df_result = df_result.apply(get_ldapinfo, ldap_mgr, ldap_fields, df_result, axis=1)
+df_result = df_result.apply(lambda row: get_ldapinfo(row, ldap_mgr, ldap_fields, df_result), axis=1)
 
 log.info("[post ldap] df_result.shape=%s" % str(df_result.shape))
 log.debug("[post ldap] df_result=\n%s" % df_result)
 
-import re
-def split_it(displayName):
-    x = re.findall('(\w+)', displayName)
-    if x :
-      return(x.group())
+# import re
+# def split_it(displayName):
+#     x = re.findall('(\w+)', displayName)
+#     if x :
+#       return(x.group())
 
 # df_result['usergroup'] = df_result['displayName'].apply(lambda x: split_it(x))
 # df_result['usergroup'] = df_result['displayName'].apply(split_it)
 
-df_result['usergroup']=df_result['description'].str.extract('\w+\((?P<UserGroup>\w+)\)\w+', expand=True)
+df_result['usergroup']=df_result['description'].str.extract('\w+ \((?P<UserGroup>\w.*)\)+', expand=True)
 
 log.info("[post derived] df_result.shape=%s" % str(df_result.shape))
 log.debug("[post derived] df_result=\n%s" % df_result)

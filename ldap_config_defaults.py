@@ -17,7 +17,7 @@ admin_bind_dn='cn=%s,%s' % (ldap_user,base_dn)
 admin_pwd=None
 
 data_dir='data'
-file_in = 'test-small.xls'
+file_in = 'test.xls'
 file_in_path = '%s/%s' % (data_dir,file_in)
 
 timestr=dt.now().strftime("%Y%m%d-%H%M%S.%f")[:-3]

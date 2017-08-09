@@ -8,14 +8,17 @@ base_db=None
 admin_bind_dn=None
 admin_pwd=None
 
-app_env='PROD'
+app_env='DEV'
 
-file_in = 'data/test-small.xls'
+loglevel='INFO'
+
+# file_in = 'data/test-small.xls'
+file_in = 'data/users.xlsx'
 
 timestr=dt.now().strftime("%Y%m%d-%H%M%S.%f")[:-3]
 file_out=file_in.split('.')[0] + '-out.%s.xls' % timestr
 
-if app_env=='TEST':
+if app_env=='DEV':
     ldap_url="ldap://localhost:389/"
     ldap_user='testuser'
     base_dn='OU=Users,DC=corp,DC=example,DC=org'
