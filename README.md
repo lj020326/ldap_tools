@@ -10,7 +10,7 @@ Step 2: modify test data in xls
 
 Step 3: run
 
-    python ldap_userinfo.py
+    python get_ldap_info.py
 
 
 
