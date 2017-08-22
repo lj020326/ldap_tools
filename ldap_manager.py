@@ -18,7 +18,7 @@ class LdapManager(object):
     ldap_conn = None
     ldap_conn_authuser = None
 
-    def __init__(self, ldap_server, admin_dn, admin_password, search_base=None, allow_self_signed=False, uid_field="uid"):
+    def __init__(self, ldap_server, admin_dn, admin_password, search_base=None, allow_self_signed=False, uid_field="cn"):
         self.ldap_server=ldap_server
         self.ldap_search_base=search_base
         self.ldap_allow_self_signed=allow_self_signed

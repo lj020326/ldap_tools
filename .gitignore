@@ -72,4 +72,7 @@ save/
 
 # do not include output data
 *out*.xls
+*out*.csv
 
+# backups
+~$*
