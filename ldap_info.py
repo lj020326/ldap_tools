@@ -8,15 +8,13 @@
 #
 # %matplotlib inline
 
-# import argparse
-import argh
-# import sys
-
 import pandas as pd
 import numpy as np
 import logging
 import json
 from math import ceil
+import argh
+import traceback
 
 from datetime import datetime as dt
 
@@ -26,22 +24,15 @@ from ldap_config_defaults import *
 from ldap_manager import LdapManager
 
 from collections import OrderedDict
+
+
+
+## ref: https://stackoverflow.com/questions/25699439/how-to-iterate-over-consecutive-chunks-of-pandas-dataframe-efficiently
+def chunker(seq, size):
+    return (seq[pos:pos + size] for pos in xrange(0, len(seq), size))
+
+
 from json import JSONEncoder
-
-import Crypto.Random
-from Crypto.Cipher import AES
-import hashlib
-
-# salt size in bytes
-SALT_SIZE = 16
-
-# number of iterations in the key generation
-NUMBER_OF_ITERATIONS = 200
-
-# the size multiple required for AES
-AES_MULTIPLE = 16
-
-KEYSTORE_PWD = "OCvk6ARpod1Pnu4sSuPa"
 
 log = logging.getLogger()
 log.handlers = []
@@ -52,78 +43,12 @@ ch.setFormatter(formatter)
 log.setLevel(loglevel)
 log.addHandler(ch)
 
+# ldap_mgr = ldap_mgr.LdapManager(ldap_url, admin_bind_dn, admin_pwd,search_base=base_dn)
+ldap_mgr = LdapManager(ldap_url, admin_bind_dn, admin_pwd, search_base=base_dn)
+
 pd.set_option('display.width', 1000)
 # pd.set_option('max_colwidth',200)
 pd.reset_option('max_colwidth')
-
-
-## ref: https://stackoverflow.com/questions/25699439/how-to-iterate-over-consecutive-chunks-of-pandas-dataframe-efficiently
-def chunker(seq, size):
-    return (seq[pos:pos + size] for pos in xrange(0, len(seq), size))
-
-
-def generate_key(password, salt, iterations):
-    assert iterations > 0
-
-    key = password + salt
-    for i in range(iterations):
-        key = hashlib.sha256(key).digest()
-
-    return key
-
-
-def pad_text(text, multiple):
-    extra_bytes = len(text) % multiple
-
-    padding_size = multiple - extra_bytes
-    padding = chr(padding_size) * padding_size
-    padded_text = text + padding
-
-    return padded_text
-
-
-def unpad_text(padded_text):
-    padding_size = ord(padded_text[-1])
-
-    text = padded_text[:-padding_size]
-
-    return text
-
-
-def encrypt(plaintext, password):
-    salt = Crypto.Random.get_random_bytes(SALT_SIZE)
-
-    key = generate_key(password, salt, NUMBER_OF_ITERATIONS)
-    cipher = AES.new(key, AES.MODE_ECB)
-    padded_plaintext = pad_text(plaintext, AES_MULTIPLE)
-    ciphertext = cipher.encrypt(padded_plaintext)
-    ciphertext_with_salt = salt + ciphertext
-
-    return ciphertext_with_salt
-
-def gen_key(password, key_file=None):
-    if key_file:
-        with open(key_file, "wt") as out_file:
-            out_file.write("[license]\n" + hostname + " = " + iouLicense + ";\n")
-        log.info("created key file [%s]" % key_file)
-        return
-
-    return encrypt(password, KEYSTORE_PWD)
-
-def get_password(cyphertext):
-    return decrypt(cyphertext, KEYSTORE_PWD)
-
-
-def decrypt(ciphertext, password):
-    salt = ciphertext[0:SALT_SIZE]
-
-    ciphertext_sans_salt = ciphertext[SALT_SIZE:]
-    key = generate_key(password, salt, NUMBER_OF_ITERATIONS)
-    cipher = AES.new(key, AES.MODE_ECB)
-    padded_plaintext = cipher.decrypt(ciphertext_sans_salt)
-    plaintext = unpad_text(padded_plaintext)
-
-    return plaintext
 
 
 class Utf8Encoder(JSONEncoder):
@@ -154,14 +79,20 @@ class Utf8Encoder(JSONEncoder):
         return data
 
 
-def get_ldap_userinfo(record, ldap_mgr, ldap_fields, df):
+
+def get_ldap_user_record(record, ldap_mgr, ldap_fields, df, uid_field=None):
     i=df.index.get_loc(record.name)
     if i % int(ceil(float(df.shape[0])/20)) == 0:
         pct_done=int((float(i)/df.shape[0])*100)
         log.info("get_ldapinfo [%s%%] done, iteration [%s]" % (pct_done, i))
 
     username=record.name
+    if uid_field:
+        username=record[uid_field]
+
     ldap_user=ldap_mgr.get_ldap_userinfo(username)
+    log.debug("UTF8 encoding user info")
+    ldap_user=json.dumps(ldap_user, cls=Utf8Encoder)
 
     if not ldap_user:
         log.warning("Could not find user [%s]" % username)
@@ -185,8 +116,27 @@ def get_ldap_userinfo(record, ldap_mgr, ldap_fields, df):
     return record
 
 
+def get_ldap_recordset(filter, ldap_mgr, ldap_fields):
+    log.debug("get_ldap_recordset[%s]" % filter)
+
+    ldap_recordset=ldap_mgr.get_ldap_recordset(filter, retrieve_attributes=ldap_fields)
+    log.debug("UTF8 encoding user info")
+    ldap_recordset=json.dumps(ldap_recordset, cls=Utf8Encoder)
+
+    if not ldap_recordset:
+        log.warning("Could not find any records for filter [%s]" % filter)
+        log.debug("return list of size %d" % len(ldap_fields))
+        return None
+
+    df=pd.DataFrame(ldap_recordset)
+    log.debug("[get_ldap_recordset] df.shape=%s" % str(df.shape))
+    log.debug("[get_ldap_recordset] df=\n%s" % df)
+
+    return df
+
+
 def get_ldap_userset(file_in_path=file_in_path):
-    "load user ids from file and retrieve ldap info for each."
+
     log.info("loading file [%s]" % file_in_path)
     xls_file = pd.ExcelFile(file_in_path)
 
@@ -197,67 +147,241 @@ def get_ldap_userset(file_in_path=file_in_path):
     for sheet in xls_file.sheet_names:
         log.info("loading sheet=[%s]" % sheet)
         #     df = xls_file.parse(sheet, header=None)
-        df = xls_file.parse(sheet)
+        # df = xls_file.parse(sheet)
+        # df = pd.read_excel('MC_simulation.xlsx', 'DataSet', encoding='utf-8')
+        df = xls_file.parse(sheet, encoding='utf-8')
         frames.append(df)
 
-    df_result = pd.concat(frames)
+    df = pd.concat(frames)
 
-    log.info("[raw] df_result.shape=%s" % str(df_result.shape))
-    log.debug("[raw] df_result=\n%s" % df_result)
+    log.info("[raw] df.shape=%s" % str(df.shape))
+    log.debug("[raw] df.head(10)=\n%s" % df.head(10))
 
-    log.info("df_results dupe count=%s" % df_result[df_result['USERNAME'].duplicated()].size)
-    if df_result[df_result['USERNAME'].duplicated()].size>0:
+    dupe_cnt=df[df['USERNAME'].duplicated()].size
+    log.info("df dupe count=%s" % dupe_cnt)
+    if dupe_cnt>0:
         log.info("grouping by username")
-        df_grouped=df_result.groupby('USERNAME')
+        df_grouped=df.groupby('USERNAME')
 
         strJoin = lambda x:",".join(x.astype(str))
         ## ref: https://pandas.pydata.org/pandas-docs/stable/groupby.html
-        # df_result=df_grouped.agg({'GRANTED_ROLE': strJoin, 'LAST_LOGIN': np.max})
-        df_result=df_grouped.agg(OrderedDict([('GRANTED_ROLE', strJoin), ('LAST_LOGIN', np.max)]))
+        # df=df_grouped.agg({'GRANTED_ROLE': strJoin, 'LAST_LOGIN': np.max})
+        df=df_grouped.agg(OrderedDict([('GRANTED_ROLE', strJoin), ('LAST_LOGIN', np.max)]), as_index=False)
+        df.reset_index(inplace=True)
 
-    log.info("[clean] df_result.shape=%s" % str(df_result.shape))
-    log.debug("[clean] df_result=\n%s" % df_result)
-
-    log.info("binding to ldap with user [%s] for running queries" % ldap_user)
-    log.info("initializing ldap")
-
-    # ldap_mgr = ldap_mgr.LdapManager(ldap_url, admin_bind_dn, admin_pwd,search_base=base_dn)
-    ldap_mgr = LdapManager(ldap_url, admin_bind_dn, admin_pwd,search_base=base_dn)
+    log.info("[clean] df.shape=%s" % str(df.shape))
+    log.debug("[clean] df.head(10)=\n%s" % df.head(10))
 
     log.info("getting user info from ldap")
-    ldap_fields = ['cn', 'description', 'mail', 'department', 'manager']
-    # df_result = df_result.apply(get_ldapinfo, ldap_mgr, ldap_fields, df_result, axis=1)
-    df_result = df_result.apply(lambda row: get_ldap_userinfo(row, ldap_mgr, ldap_fields, df_result), axis=1)
 
-    log.info("[post ldap] df_result.shape=%s" % str(df_result.shape))
-    log.debug("[post ldap] df_result=\n%s" % df_result)
+    log.info("using user account [%s] to bind to ldap" % ldap_user)
 
-    df_result['usergroup']=df_result['description'].str.extract('\w+ \((?P<UserGroup>\w.*)\)', expand=True)
+    log.info("initializing ldap")
 
-    log.info("[post derived] df_result.shape=%s" % str(df_result.shape))
-    log.debug("[post derived] df_result=\n%s" % df_result)
+    # # ldap_mgr = ldap_mgr.LdapManager(ldap_url, admin_bind_dn, admin_pwd,search_base=base_dn)
+    # ldap_mgr = LdapManager(ldap_url, admin_bind_dn, admin_pwd,search_base=base_dn)
 
-    log.info("writing results to excel file [%s]" % file_out)
+    ldap_fields = ['cn','displayName','description', 'mail', 'department', 'manager']
+    # ldap_fields_minus_cn = [x for x in ldap_fields if x != 'cn']
+    # ldap_fields_minus_cn_r = ["%s_r" % x for x in ldap_fields_minus_cn]
 
-    writer = pd.ExcelWriter(file_out)
-    # df_result.to_excel(writer,'Sheet1')
-    df_result.to_excel(writer,'Sheet1', encoding='utf8')
-    writer.save()
+    # df_result = df_result.apply(get_ldap_user_record, ldap_mgr, ldap_fields, df_result, axis=1)
+    # df_result = df_result.apply(lambda row: get_ldap_user_record(row, ldap_mgr, ldap_fields, df_result), axis=1)
+
+    # log.info("initializing ldap columns in dataframe")
+    # # df[ldap_fields]=None
+    # df = pd.concat([df, pd.DataFrame(columns=ldap_fields)])
+
+    log.info("setting dataframe index")
+    df['cn']=df['USERNAME']
+    # df['cn']=df.index
+    df.set_index('cn', inplace=True)
+    df.index = df.index.str.upper()
+
+    log.info("[pre-ldap] df.shape=%s" % str(df.shape))
+    log.info("[pre-ldap] df.head(10)=\n%s" % df.head(10))
+
+    # df_ldap_results = pd.concat([df, pd.DataFrame(columns=ldap_fields)])
+    # df_ldap_results = pd.DataFrame(index='cn', columns=ldap_fields_minus_cn)
+    df_ldap_results = pd.DataFrame(columns=ldap_fields)
+    df_ldap_results.set_index('cn', inplace=True)
+
+    chunk_size=10
+    for df_chunk in chunker(df, chunk_size):
+        # id_list = df_chunk['cn'].str.cat(sep=')(cn=')
+        id_list = df_chunk.index.str.cat(sep=')(cn=')
+
+        log.debug("id_list=%s" % id_list)
+
+        filter="(&(objectClass=organizationalPerson)"
+        filter+="(|(cn=" + id_list + ")))"
+
+        log.debug("filter=%s" % filter)
+        df_results = get_ldap_recordset(filter, ldap_mgr, ldap_fields)
+
+        log.debug("df_results.shape=%s" % str(df_results.shape))
+        log.debug("df_results=\n%s" % df_results)
+
+        df_results.set_index('cn', inplace=True)
+        df_results.index=df_results.index.str.upper()
+
+        log.debug("df_results.shape=%s" % str(df_results.shape))
+        log.debug("df_results=\n%s" % df_results)
+
+        df_ldap_results=df_ldap_results.append(df_results, verify_integrity=True)
+        log.info("[post-append] df_ldap_results.shape=%s" % str(df_ldap_results.shape))
+        log.debug("[post-append] df_ldap_results[df_ldap_results.index.isin(df_results.index)]=\n%s" % df_ldap_results[df_ldap_results.index.isin(df_results.index)])
+
+    log.info("df_ldap_results.shape=%s" % str(df_ldap_results.shape))
+    log.info("df_ldap_results.head(10)=\n%s" % df_ldap_results.head(10))
+
+    df=df.join(df_ldap_results, rsuffix='_r')
+    log.info("[post-join] df.head(10)=\n%s" % df.head(10))
+
+    log.info("setting derived values")
+
+    df['usergroup']=df['description'].str.extract('\w+ \((?P<UserGroup>\w.*)\)', expand=True)
+    df['manager_id']=df['manager'].str[3:10].str.upper()
+    # df['manager_name']=df.join(df, on='manager_id', rsuffix='_mgr')['description_mgr']
+
+    log.info("[post derived] df.shape=%s" % str(df.shape))
+    log.debug("[post derived] df=\n%s" % df)
+
+    log.info("getting manager names")
+    df = get_manager_names(df)
+
+    csv_store='%s/results.csv' % data_dir
+    log.info("writing results to [%s]" % csv_store)
+    df.to_csv(csv_store, encoding='utf-8')
+
+    try:
+        df_tmp = pd.read_csv(csv_store, encoding='utf-8')
+        log.info("writing results to [%s]" % file_out)
+        # df.to_excel(file_out, encoding='utf-8')
+        df_tmp.to_excel(file_out)
+    except  Exception as err:
+        log.error("when writing to file %s - exception occurred %s" % (file_out, err))
+        traceback.print_exc()
 
     log.info("done")
 
 
-def main():
+def get_manager_names(df=None, csv_store=None):
 
-    # ref: https://pypi.python.org/pypi/argh
-    # assembling:
-    parser = argh.ArghParser()
-    parser.add_commands([get_ldap_userset, gen_key])
+    if csv_store:
+        # csv_store='%s/results.csv' % data_dir
+        log.info("loading file [%s]" % csv_store)
 
-    # dispatching:
-    parser.dispatch()
+        df = pd.read_csv(csv_store, encoding='utf-8')
+
+    log.info("df.shape=%s" % str(df.shape))
+
+    # df_grouped = df.groupby('manager_id')
+    # df_mgr=pd.DataFrame(df_grouped.groups.keys(),columns=['manager_id'])
+    # df_mgr = pd.DataFrame(df[df['manager_name'].isnull()].groupby('manager_id').groups.keys(),columns=['manager_id'])
+    df_mgr = pd.DataFrame(df.groupby('manager_id').groups.keys(),columns=['manager_id'])
+    # df_mgr=pd.DataFrame(df[df['manager_name'].isnull()], columns=['manager_id'])
+
+    log.info("df_mgr.shape=%s" % str(df_mgr.shape))
+    # log.debug("df_mgr.columns = %s" % df_mgr.columns)
+    log.debug("df_mgr=\n%s" % df_mgr)
+
+    ldap_fields=['cn','description','displayName']
+    df_ldap_results = pd.DataFrame(columns=ldap_fields)
+    df_ldap_results.set_index('cn', inplace=True)
+
+    chunk_size=10
+    for df_chunk in chunker(df_mgr, chunk_size):
+        log.info("df_chunk.shape=%s" % str(df_chunk.shape))
+        log.info("df_chunk=\n%s" % df_chunk)
+
+        id_list = df_chunk['manager_id'].str.cat(sep=')(cn=')
+        log.debug("id_list=%s" % id_list)
+
+        filter="(&(objectClass=organizationalPerson)"
+        filter+="(|(cn=" + id_list + ")))"
+
+        log.debug("filter=%s" % filter)
+        df_results = get_ldap_recordset(filter, ldap_mgr, ldap_fields)
+
+        log.debug("df_results.shape=%s" % str(df_results.shape))
+        log.debug("df_results=\n%s" % df_results)
+
+        df_results.set_index('cn', inplace=True)
+        df_results.index=df_results.index.str.upper()
+
+        log.debug("df_results.shape=%s" % str(df_results.shape))
+        log.debug("df_results=\n%s" % df_results)
+
+        # df_ldap_results=df_ldap_results.append(df_results, verify_integrity=True)
+        df_ldap_results=df_ldap_results.append(df_results)
+        log.info("[post-append] df_ldap_results.shape=%s" % str(df_ldap_results.shape))
+        log.debug("[post-append] df_ldap_results[df_ldap_results.index.isin(df_results.index)]=\n%s" % df_ldap_results[df_ldap_results.index.isin(df_results.index)])
+
+    # df_ldap_results['cn'].rename('manager_id')
+
+    log.info("df_ldap_results.shape=%s" % str(df_ldap_results.shape))
+    log.info("df_ldap_results.head(10)=\n%s" % df_ldap_results.head(10))
+
+    df=df.join(df_ldap_results, rsuffix='_mgr', on='manager_id')
+    df.loc[df['displayName_mgr'].isnull() == False, 'manager_name'] = df['displayName_mgr']
+    df.drop(['description_mgr','displayName_mgr'], axis=1, inplace=True)
+    log.info("[post-join] df.head(10)=\n%s" % df.head(10))
+
+    # #### REMOVE
+    # chunk_size=10
+    # for df_chunk in chunker(df_mgr, chunk_size):
+    #     id_list = df_chunk['manager_id'].str.cat(sep=')(cn=')
+    #
+    #     log.debug("id_list=%s" % id_list)
+    #
+    #     filter="(&(objectClass=organizationalPerson)"
+    #     filter+="(|(cn=" + id_list + ")))"
+    #
+    #     log.debug("filter=%s" % filter)
+    #     df_results = get_ldap_recordset(filter, ldap_mgr, ldap_fields)
+    #
+    #     log.info("df_results.shape=%s" % str(df_results.shape))
+    #     log.debug("df_results=\n%s" % df_results)
+    #
+    #     df_results.set_index('cn', inplace=True)
+    #     df_results.index=df_results.index.str.upper()
+    #
+    #     log.info("df_results.shape=%s" % str(df_results.shape))
+    #     log.info("df_results['displayName']=\n%s" % df_results['displayName'])
+    #
+    #     log.info("[before join] df_chunk=\n%s" % df_chunk)
+    #
+    #     df_chunk=df_chunk.join(df_results['displayName'], rsuffix='_mgr', on='manager_id')
+    #     log.info("[post join] df_chunk=\n%s" % df_chunk)
+    #
+    #     log.info("[pre-update] df[df.index.isin(df_chunk.index)]=\n%s" % df[df.index.isin(df_chunk.index)])
+    #
+    #     df=df.join(df_chunk['displayName'], rsuffix='_mgr')
+    #     df.loc[df['displayName_mgr'].isnull() == False, 'manager_name'] = df['displayName_mgr']
+    #
+    #     log.info("[post-update] df[df.index.isin(df_chunk.index)]=\n%s" % df[df.index.isin(df_chunk.index)])
+    #
+    #     if 'displayName_mgr' in df.columns:
+    #         del df['displayName_mgr']
+
+    # log.info("df.shape=%s" % str(df.shape))
+    # log.info("df=\n%s" % df)
+    #
+    # log.info("writing results to excel file [%s]" % file_out)
+    # # df.to_excel(file_out, encoding='utf8')
+
+    # log.info("done")
+    return df
+
+
+# assembling
+parser=argh.ArghParser()
+parser.add_commands([get_ldap_userset, get_manager_names])
 
 
 if __name__ == "__main__":
-    main()
+    # dispatching
+    parser.dispatch()
+
 

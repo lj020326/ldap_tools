@@ -34,21 +34,20 @@ class LdapManager(object):
             self.ldap_conn.set_option(ldap.OPT_REFERRALS, 0)
 
             # Authenticate admin user
-            if not self.ldap_conn.simple_bind_s(admin_dn, admin_password):
-                error_msg="Failed to bind to ldap for admin user_dn [%s]" % admin_dn
-                log.error(error_msg)
-                raise error_msg
+            self.ldap_conn.simple_bind_s(admin_dn, admin_password)
 
             log.info("**** create ldap connection for user binds to LDAP")
             self.ldap_conn_authuser = ldap.initialize(self.ldap_server)
             self.ldap_conn_authuser.set_option(ldap.OPT_REFERRALS, 0)
 
-
-        except ldap.LDAPError as e:
+        except ldap.LDAPError, e:
             if type(e.message) == dict and 'desc' in e.message:
-                log.error("Error in LDAP bind [%s]" % e.message['desc'])
+                error_msg="Error in LDAP bind [%s]" % e.message['desc']
+                log.error(error_msg)
+                raise
             else:
-                log.error(e)
+                log.error("Error in LdapManager initialization [%s]" % e)
+                raise
 
 
     def search_ldap_record(self, filter_str, base_dn=None, retrieve_attributes = None):
@@ -95,6 +94,50 @@ class LdapManager(object):
             if not user[0][0]:
                 return None
         return user
+
+    def get_ldap_records(self, filter, base_dn=None, retrieve_attributes=None, objectClass='organizationalPerson'):
+        """
+            Gets LDAP record for user.
+            :param filter: filter to query
+            :param base_dn: The ldap search base_dn
+            :param retrieve_attributes: attributes to return - all if set to None
+            :return: ldap object array
+        """
+
+        if base_dn is None:
+            base_dn=self.ldap_search_base
+
+        log.debug("filter_str=[%s]" % filter)
+        # log.debug("filter_str=[%s]" % filter_str)
+        ldap_recordset = self.ldap_conn.search_s(base_dn,
+                                    ldap.SCOPE_SUBTREE,
+                                    filter,
+                                    retrieve_attributes)
+        return ldap_recordset
+
+    def get_ldap_recordset(self, filter, base_dn=None, retrieve_attributes=None):
+        """
+            Gets native python object/dictionary representation for LDAP user record.
+            :param filter: LDAP filter to query
+            :param base_dn: The ldap search base_dn
+            :param retrieve_attributes: attributes to return - all if set to None
+            :return: ldap object array
+        """
+        ldap_recordset_raw = self.get_ldap_records(filter,base_dn,retrieve_attributes)
+
+        if not ldap_recordset_raw:
+            log.warning("Could not find any records for filter [%s]" % filter)
+            return None
+
+        ldap_recordset=[]
+        for ldap_record in ldap_recordset_raw:
+            (dn, ldap_record_detail) = ldap_record
+            ldap_record = self.get_ldap_dict(ldap_record_detail)
+
+            ldap_recordset.append(ldap_record)
+
+        return ldap_recordset
+
 
     def get_ldap_userinfo(self, userid, base_dn=None, retrieve_attributes=None):
         """
