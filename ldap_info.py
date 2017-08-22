@@ -134,6 +134,9 @@ def get_ldap_userset_chunked(df, ldap_fields, chunk_size=10):
     df_ldap_results.set_index(configs.ldap_user_id, inplace=True)
 
     for df_chunk in chunker(df, chunk_size):
+        log.debug("df_chunk.shape=%s" % str(df_chunk.shape))
+        log.debug("df_chunk=\n%s" % df_chunk)
+
         # id_list = df_chunk['cn'].str.cat(sep=')(cn=')
         # id_list = df_chunk.index.str.cat(sep=')(cn=')
         delim=')(%s=' % configs.ldap_user_id
@@ -142,7 +145,6 @@ def get_ldap_userset_chunked(df, ldap_fields, chunk_size=10):
         log.debug("id_list=%s" % id_list)
 
         filter="(&(objectClass=organizationalPerson)"
-        # filter+="(|(cn=" + id_list + ")))"
         filter+="(|(%s=%s)))" % (configs.ldap_user_id, id_list)
 
         log.debug("filter=%s" % filter)
@@ -268,11 +270,8 @@ def get_manager_names(df=None, csv_store=None):
 
     log.info("df.shape=%s" % str(df.shape))
 
-    # df_grouped = df.groupby('manager_id')
-    # df_mgr=pd.DataFrame(df_grouped.groups.keys(),columns=['manager_id'])
-    # df_mgr = pd.DataFrame(df[df['manager_name'].isnull()].groupby('manager_id').groups.keys(),columns=['manager_id'])
     df_mgr = pd.DataFrame(df.groupby('manager_id').groups.keys(),columns=['manager_id'])
-    # df_mgr=pd.DataFrame(df[df['manager_name'].isnull()], columns=['manager_id'])
+    df_mgr.set_index('manager_id', inplace=True)
 
     log.info("df_mgr.shape=%s" % str(df_mgr.shape))
     # log.debug("df_mgr.columns = %s" % df_mgr.columns)
@@ -280,7 +279,7 @@ def get_manager_names(df=None, csv_store=None):
 
     ldap_fields=[configs.ldap_user_id,'description','displayName']
 
-    df_ldap_results=get_ldap_userset_chunked(df, ldap_fields, chunk_size=configs.ldap_query_chunk_size)
+    df_ldap_results=get_ldap_userset_chunked(df_mgr, ldap_fields, chunk_size=configs.ldap_query_chunk_size)
     df=df.join(df_ldap_results, rsuffix='_mgr', on='manager_id')
     df.loc[df['displayName_mgr'].isnull() == False, 'manager_name'] = df['displayName_mgr']
     df.drop(['description_mgr','displayName_mgr'], axis=1, inplace=True)

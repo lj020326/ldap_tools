@@ -22,6 +22,9 @@ data_dir='data'
 file_in = 'test.xls'
 file_in_path = '%s/%s' % (data_dir,file_in)
 
+loglevel='INFO'
+
+
 timestr=dt.now().strftime("%Y%m%d-%H%M%S.%f")[:-3]
 file_out=file_in_path.split('.')[0] + '-out.%s' % timestr
 
