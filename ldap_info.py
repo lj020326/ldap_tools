@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 
 # from IPython.core.interactiveshell import InteractiveShell
 # InteractiveShell.ast_node_interactivity = "all"
@@ -41,7 +42,7 @@ ch.setFormatter(formatter)
 log.setLevel(configs.loglevel)
 log.addHandler(ch)
 
-ldap_mgr = LdapManager(configs.ldap_url, configs.admin_bind_dn, configs.admin_pwd, search_base=configs.base_dn, uid_field=configs.ldap_user_id)
+ldap_mgr = LdapManager(configs.ldap_url, configs.ldap_bind_dn, configs.admin_pwd, search_base=configs.base_dn, uid_field=configs.ldap_user_id)
 
 pd.set_option('display.width', 1000)
 # pd.set_option('max_colwidth',200)
@@ -126,6 +127,7 @@ def get_ldap_recordset(filter, ldap_mgr, ldap_fields):
     log.debug("[get_ldap_recordset] df=\n%s" % df)
 
     return df
+
 
 def get_ldap_userset_chunked(df, ldap_fields, chunk_size=10):
     # df_ldap_results = pd.concat([df, pd.DataFrame(columns=ldap_fields)])

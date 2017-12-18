@@ -10,7 +10,5 @@ Step 2: modify test data in xls
 
 Step 3: run
 
-    python get_ldap_info.py
-
-
+    python ldap_info.py get_manager_names
 

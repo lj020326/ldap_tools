@@ -16,7 +16,7 @@ loglevel='INFO'
 file_in = 'data/users.xlsx'
 
 timestr=dt.now().strftime("%Y%m%d-%H%M%S.%f")[:-3]
-file_out=file_in.split('.')[0] + '-out.%s.xls' % timestr
+file_out=file_in.split('.')[0] + '-out.%s' % timestr
 
 if app_env=='DEV':
     ldap_url="ldap://localhost:389/"
