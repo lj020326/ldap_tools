@@ -13,7 +13,7 @@ ldap_url="ldaps://localhost:636/"
 ldap_user=getpass.getuser()
 base_dn = 'OU=Users,DC=corp,DC=example,DC=org'
 admin_bind_dn='cn=%s,%s' % (ldap_user,base_dn)
-admin_pwd=None
+ldap_pwd=None
 ldap_user_id='cn'
 
 ldap_query_chunk_size=10
@@ -49,5 +49,5 @@ except Exception, e:
     raise e
 
 
-if not admin_pwd:
-    admin_pwd = getpass.getpass("enter password for user [%s] : " % ldap_user)
+if not ldap_pwd:
+    ldap_pwd = getpass.getpass("enter password for user [%s] : " % ldap_user)
