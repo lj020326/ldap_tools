@@ -17,7 +17,7 @@ pycparser==2.18
 pyopenssl>=17.5.0
 pyparsing==2.2.0
 python-dateutil==2.6.1
-python-ldap==2.4.41
+python-ldap==3.4.0
 pytz==2017.2
 pyvmomi==6.5
 #PyYAML==3.11
